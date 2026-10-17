@@ -1,0 +1,7 @@
+# S4 bot dependencies
+project-x-py>=4.0
+pyyaml>=6.0
+polars>=1.0
+
+# Test-only
+pytest>=8.0

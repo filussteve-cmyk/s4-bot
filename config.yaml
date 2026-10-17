@@ -1,0 +1,27 @@
+# S4 Double Top/Bottom bot configuration.
+#
+# CREDENTIAL SAFETY: never commit real keys. Prefer the TOPSTEPX_USERNAME /
+# TOPSTEPX_API_KEY / TOPSTEPX_ACCOUNT_ID environment variables (they take
+# precedence over the values below). If you must put real values in a file,
+# copy this to config.local.yaml and keep it git-ignored — the bot does not
+# read config.local.yaml; it is only a safe place for you to keep secrets.
+
+# TopstepX (ProjectX Gateway) credentials — PLACEHOLDERS, replace to run.
+username: "YOUR_TOPSTEPX_USERNAME"
+api_key: "YOUR_TOPSTEPX_API_KEY"
+
+# Numeric TopstepX account id (e.g. the practice/combine account). Required
+# for live mode; 0 disables broker P&L reconciliation.
+account_id: 0
+
+# Mode: "paper" (default) or "live".
+#   paper: connect, read bars, detect setups, LOG signals. ZERO orders placed.
+#   live:  place real limit + bracket orders on the account above.
+# Live trading requires explicitly setting mode: live. There is no other path.
+mode: "paper"
+
+# Strategy / execution settings
+symbol: "ES"          # front-month ES is resolved automatically at startup
+size: 1               # contracts per trade
+max_daily_loss: 500.0 # halt new entries if realized daily P&L <= -$500
+poll_seconds: 60      # main-loop cadence during RTH

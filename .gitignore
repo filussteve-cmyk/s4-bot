@@ -1,0 +1,15 @@
+# Runtime state and secrets — never commit
+state.json
+config.local.yaml
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Logs
+*.log
