@@ -95,17 +95,15 @@ def deserialize_level(d: dict) -> Level:
 # Broker helpers
 # ---------------------------------------------------------------------------
 
-async def resolve_es_contract(suite) -> str:
+async def resolve_es_contract(client) -> str:
     """Return the front-month ES contract id (activeContract flag)."""
-    contracts = await suite.client.list_available_contracts(live=False)
+    contracts = await client.list_available_contracts(live=False)
     for c in contracts:
         name = (c.name or "").upper()
         if name.startswith("ES") and c.activeContract:
             log.info("ES front-month contract: %s (%s)", c.id, c.name)
             return c.id
-    # Fallback: whatever instrument the suite resolved.
-    log.warning("No activeContract ES found; falling back to suite instrument id.")
-    return suite.instrument_id
+    raise RuntimeError("No activeContract ES front-month contract found.")
 
 
 def bars_from_df(df, trade_date: str):
@@ -168,13 +166,29 @@ async def main() -> None:
     if not live:
         log.info("Paper mode: signals will be logged; ZERO orders will be placed.")
 
-    from project_x_py import TradingSuite, OrderSide  # imported late: needs install
+    # NOTE: we deliberately use the ProjectX REST client directly instead of
+    # TradingSuite: TradingSuite forces realtime WebSocket connections, which
+    # cannot traverse this machine's egress proxy. The bot's 60s polling loop
+    # only needs REST (bars, contracts, positions, orders, trades).
+    from project_x_py import ProjectX, OrderSide  # imported late: needs install
+    from project_x_py.order_manager import OrderManager
+    from project_x_py.position_manager import PositionManager
+    from project_x_py.event_bus import EventBus
+    from types import SimpleNamespace
 
-    suite = await TradingSuite.create(
-        instrument=symbol, username=cfg["username"], api_key=cfg["api_key"])
-    log.info("Connected to TopstepX.")
+    client = ProjectX(username=cfg["username"], api_key=cfg["api_key"])
+    await client.authenticate()
+    log.info("Connected to TopstepX (REST).")
+    _bus = EventBus()
+    # Adapter so the rest of the code keeps its suite.client/orders/positions
+    # shape without depending on TradingSuite's realtime stack.
+    suite = SimpleNamespace(
+        client=client,
+        orders=OrderManager(client, _bus),
+        positions=PositionManager(client, _bus),
+    )
     try:
-        contract_id = await resolve_es_contract(suite)
+        contract_id = await resolve_es_contract(suite.client)
 
         # ---- Startup reconciliation FIRST: never double-order after restart.
         position = await risk.get_open_position(suite, account_id, contract_id)
@@ -307,10 +321,7 @@ async def main() -> None:
             save_state(state)
             await asyncio.sleep(poll_seconds)
     finally:
-        try:
-            await suite.disconnect()
-        except Exception:
-            pass
+        # REST client holds no realtime connections; nothing to tear down.
         log.info("S4 bot stopped.")
 
 

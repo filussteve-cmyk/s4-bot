@@ -2,7 +2,7 @@
 
 Pure functions (in_rth, should_flatten, daily_loss_halted, can_open) take
 explicit arguments and are unit-testable. The async helpers query the
-TopstepX account through the project-x-py TradingSuite.
+TopstepX account through the project-x-py REST client (no realtime needed).
 """
 
 from datetime import datetime, time
