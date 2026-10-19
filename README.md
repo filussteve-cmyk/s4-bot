@@ -9,7 +9,7 @@ only (09:30–16:00 ET). A swing extreme (±5 bars) pulls back ≥10 points, the
 retests ≥30 minutes later with the touch bar's extreme inside [L−1.0, L+0.5]
 (tops) / [L−0.5, L+1.0] (bottoms). Entry is a limit at exactly L with a
 native 4-point stop / 5-point target bracket. One attempt per level per day,
-max 1 position, everything flattened at 15:55 ET — never held overnight.
+max 1 position, everything flattened at 16:09 ET — never held overnight.
 
 ## Safety: paper mode is the default
 
@@ -59,7 +59,7 @@ There is no flag, env var, or argument that enables live trading by
 accident. On startup the bot logs `S4 bot starting in LIVE mode` so it is
 unmistakable. Risk guards always apply: max 1 position, no entries outside
 RTH, daily realized-loss halt at −$500 (`max_daily_loss`), flatten-all at
-15:55 ET, and startup reconciliation (existing positions/working orders are
+16:09 ET, and startup reconciliation (existing positions/working orders are
 queried first — the bot never double-orders after a restart).
 
 ## Layout
@@ -68,7 +68,7 @@ queried first — the bot never double-orders after a restart).
 |---|---|
 | `strategy.py` | Pure strategy logic (no I/O): swing detection, level lifecycle, signals. Unit-tested. |
 | `bot.py` | Async main loop (60s cadence, RTH): bars → strategy → risk → paper log / live bracket order. |
-| `risk.py` | Guards: RTH window, 15:55 flatten, −$500 daily halt, max-1-position, flatten-all + P&L helpers. |
+| `risk.py` | Guards: RTH window, 16:09 flatten, −$500 daily halt, max-1-position, flatten-all + P&L helpers. |
 | `config.yaml` | Placeholders only. `mode: paper` default. |
 | `state.json` | Runtime state (git-ignored): today's levels, signals, P&L. |
 | `test_strategy.py` | 18 tests: rule unit tests + synthetic-month sanity (~1 signal/day). |

@@ -18,7 +18,9 @@ account_id: 0
 #   paper: connect, read bars, detect setups, LOG signals. ZERO orders placed.
 #   live:  place real limit + bracket orders on the account above.
 # Live trading requires explicitly setting mode: live. There is no other path.
-mode: "paper"
+# NOTE (local override 2026-10-17): Steve directed live trading on the
+# practice account. This local change is NOT pushed to GitHub.
+mode: "live"
 
 # Strategy / execution settings
 symbol: "ES"          # front-month ES is resolved automatically at startup

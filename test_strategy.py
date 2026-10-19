@@ -248,8 +248,8 @@ def test_in_rth():
 
 
 def test_should_flatten():
-    assert not risk.should_flatten(_et(15, 54))
-    assert risk.should_flatten(_et(15, 55))
+    assert not risk.should_flatten(_et(16, 8))
+    assert risk.should_flatten(_et(16, 9))
     assert risk.should_flatten(_et(16, 30))
 
 
@@ -269,8 +269,8 @@ def test_can_open_gates():
     assert not ok and "working" in reason
     ok, reason = risk.can_open(False, False, _et(10, 0), -500.0, 500.0)
     assert not ok and "halt" in reason
-    ok, reason = risk.can_open(False, False, _et(15, 56), 0.0, 500.0)
-    assert not ok and "flatten" in reason
+    ok, reason = risk.can_open(False, False, _et(16, 10), 0.0, 500.0)
+    assert not ok and "RTH" in reason  # RTH close (16:00) gates entries before flatten (16:09)
     ok, reason = risk.can_open(False, False, _et(8, 0), 0.0, 500.0)
     assert not ok and "RTH" in reason
 

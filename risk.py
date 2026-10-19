@@ -13,7 +13,7 @@ ET = ZoneInfo("America/New_York")
 
 RTH_OPEN = time(9, 30)     # regular trading hours start (ET)
 RTH_CLOSE = time(16, 0)    # regular trading hours end (ET)
-FLATTEN_TIME = time(15, 55)  # flatten everything at 15:55 ET — no overnight, ever
+FLATTEN_TIME = time(16, 9)   # flatten everything at 16:09 ET — no overnight, ever
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ def in_rth(now: Optional[datetime] = None) -> bool:
 
 
 def should_flatten(now: Optional[datetime] = None) -> bool:
-    """True at/after 15:55 ET — flatten everything, no overnight positions."""
+    """True at/after 16:09 ET — flatten everything, no overnight positions."""
     now = now or now_et()
     cur = now.astimezone(ET).time() if now.tzinfo else now.time()
     return cur >= FLATTEN_TIME
@@ -53,7 +53,7 @@ def can_open(has_position: bool,
     if not in_rth(now):
         return False, "outside RTH"
     if should_flatten(now):
-        return False, "past flatten time (15:55 ET)"
+        return False, "past flatten time (16:09 ET)"
     if has_position:
         return False, "position already open (max 1)"
     if has_working_orders:

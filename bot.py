@@ -230,9 +230,9 @@ async def main() -> None:
                 await asyncio.sleep(poll_seconds)
                 continue
 
-            # 15:55 ET flatten — once per day, then stand down.
+            # 16:09 ET flatten — once per day, then stand down.
             if risk.should_flatten(now) and not flattened_today:
-                log.warning("15:55 ET flatten: cancelling orders and closing positions.")
+                log.warning("16:09 ET flatten: cancelling orders and closing positions.")
                 if live:
                     await risk.flatten_all(suite, account_id, contract_id)
                 else:
