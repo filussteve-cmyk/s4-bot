@@ -57,6 +57,8 @@ def blank_state() -> dict:
         "daily_pnl": 0.0,
         "halted": False,
         "has_position": False,   # set on startup if a position already exists
+        "entry_order_id": None,
+        "protective_order_ids": [],  # stop/target ids of the open bracket
     }
 
 
@@ -205,6 +207,25 @@ async def main() -> None:
                             o.id, o.side, o.type, o.limitPrice, o.stopPrice)
 
         state = load_state()
+        # Trust the broker, not the state file: sync the position flag, and
+        # cancel protective orders orphaned by a position that closed while
+        # the bot was down (the SDK's client-side OCO never fires over REST).
+        state["has_position"] = position is not None
+        if live and position is None and state.get("protective_order_ids"):
+            working_ids = {o.id for o in working}
+            for oid in list(state["protective_order_ids"]):
+                if oid in working_ids:
+                    try:
+                        await suite.orders.cancel_order(
+                            order_id=oid, account_id=account_id)
+                        log.warning("Startup: cancelled orphaned protective "
+                                    "order %s.", oid)
+                    except Exception as e:
+                        log.warning("Startup: could not cancel order %s: %s",
+                                    oid, e)
+            state["protective_order_ids"] = []
+            state["entry_order_id"] = None
+            save_state(state)
         levels = [deserialize_level(d) for d in state.get("levels", [])]
         last_bar_count = 0
         flattened_today = False
@@ -239,6 +260,8 @@ async def main() -> None:
                     log.info("PAPER: would flatten all (cancel orders + close positions).")
                 flattened_today = True
                 state["has_position"] = False
+                state["protective_order_ids"] = []
+                state["entry_order_id"] = None
                 save_state(state)
                 continue
 
@@ -254,6 +277,37 @@ async def main() -> None:
                               state["daily_pnl"])
                     state["halted"] = True
                     save_state(state)
+
+            # Reconcile position state with the broker every poll. When a
+            # stop or target fills, the sibling protective order is orphaned
+            # (the SDK's client-side OCO never fires over REST polling) and
+            # has_position goes stale unless cleaned up here.
+            if live and state.get("has_position"):
+                try:
+                    pos_now = await risk.get_open_position(
+                        suite, account_id, contract_id)
+                    if pos_now is None:
+                        wo_now = await risk.get_working_orders(
+                            suite, account_id, contract_id)
+                        working_ids = {o.id for o in wo_now}
+                        entry_id = state.get("entry_order_id")
+                        if entry_id is not None and entry_id in working_ids:
+                            pass  # entry limit still working — not filled yet
+                        else:
+                            for oid in list(state.get("protective_order_ids", [])):
+                                if oid in working_ids:
+                                    await suite.orders.cancel_order(
+                                        order_id=oid, account_id=account_id)
+                                    log.warning("Reconcile: cancelled orphaned "
+                                                "protective order %s.", oid)
+                            state["protective_order_ids"] = []
+                            state["entry_order_id"] = None
+                            state["has_position"] = False
+                            log.info("Reconcile: position closed at broker; "
+                                     "state synced to flat.")
+                            save_state(state)
+                except Exception as e:
+                    log.warning("Position reconcile failed: %s", e)
 
             # Pull latest 5-min bars.
             try:
@@ -315,7 +369,13 @@ async def main() -> None:
                         account_id=account_id,
                     )
                     log.warning("LIVE order placed: %s", resp)
-                    state["has_position"] = True  # will reconcile next loop
+                    state["has_position"] = True
+                    state["entry_order_id"] = getattr(resp, "entry_order_id", None)
+                    state["protective_order_ids"] = [
+                        oid for oid in (getattr(resp, "stop_order_id", None),
+                                        getattr(resp, "target_order_id", None))
+                        if oid]
+                    save_state(state)
 
             state["levels"] = [serialize_level(lv) for lv in levels]
             save_state(state)
