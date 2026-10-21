@@ -358,16 +358,28 @@ async def main() -> None:
                     # LIVE: native bracket — limit at L, 4-pt stop, 5-pt target.
                     side = (OrderSide.SELL.value if sig.direction == "short"
                             else OrderSide.BUY.value)
-                    resp = await suite.orders.place_bracket_order(
-                        contract_id=contract_id,
-                        side=side,
-                        size=size,
-                        entry_price=sig.entry,
-                        stop_loss_price=sig.stop,
-                        take_profit_price=sig.target,
-                        entry_type="limit",
-                        account_id=account_id,
-                    )
+                    try:
+                        resp = await suite.orders.place_bracket_order(
+                            contract_id=contract_id,
+                            side=side,
+                            size=size,
+                            entry_price=sig.entry,
+                            stop_loss_price=sig.stop,
+                            take_profit_price=sig.target,
+                            entry_type="limit",
+                            account_id=account_id,
+                        )
+                    except Exception as e:
+                        # The SDK raises when the entry limit doesn't fill
+                        # within its 60s wait — it cancels the unfilled entry
+                        # order itself before raising. That's a no-trade
+                        # outcome, not a crash: no position and no working
+                        # order remain at the broker. Size is 1 contract, so
+                        # a partial fill can't leave us exposed. Log it and
+                        # keep the loop alive so the next signal can fire.
+                        log.warning("LIVE bracket failed (entry unfilled): %s. "
+                                    "No position taken — continuing.", e)
+                        continue
                     log.warning("LIVE order placed: %s", resp)
                     state["has_position"] = True
                     state["entry_order_id"] = getattr(resp, "entry_order_id", None)
