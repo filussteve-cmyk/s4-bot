@@ -17,7 +17,7 @@ Rules (do not improvise):
   - Invalid: a third touch of the same level (no triple tops/bottoms).
   - Entry: limit at exactly L on the second touch. A fill requires the
     touch bar to trade within 1 tick (0.25 points) of L.
-  - Stop: 4 points. Target: 5 points.
+  - Stop: 2 points. Target: 7 points.
   - One attempt per level per day. Max 1 open position at a time
     (enforced by the caller via risk.can_open).
 """
@@ -33,8 +33,8 @@ MIN_BARS_BETWEEN_TOUCHES = 6  # retest >=30 min (>=6 five-min bars) after first 
 TOUCH_WINDOW_BELOW = 1.0      # tops: second-touch high must be within [L-1.0, L+0.5]
 TOUCH_WINDOW_ABOVE = 0.5
 FILL_TOL_POINTS = TICK        # fill requires the touch bar within 1 tick of L
-STOP_POINTS = 4.0
-TARGET_POINTS = 5.0
+STOP_POINTS = 2.0
+TARGET_POINTS = 7.0
 
 
 @dataclass
@@ -64,8 +64,8 @@ class Signal:
     direction: str   # "short" | "long"
     L: float
     entry: float     # == L
-    stop: float      # L+4 (short) / L-4 (long)
-    target: float    # L-5 (short) / L+5 (long)
+    stop: float      # L+2 (short) / L-2 (long)
+    target: float    # L-7 (short) / L+7 (long)
     bar_idx: int
 
 

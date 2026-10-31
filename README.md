@@ -8,7 +8,7 @@ ProjectX Gateway API client).
 only (09:30–16:00 ET). A swing extreme (±5 bars) pulls back ≥10 points, then
 retests ≥30 minutes later with the touch bar's extreme inside [L−1.0, L+0.5]
 (tops) / [L−0.5, L+1.0] (bottoms). Entry is a limit at exactly L with a
-native 4-point stop / 5-point target bracket. One attempt per level per day,
+native 2-point stop / 7-point target bracket. One attempt per level per day,
 max 1 position, everything flattened at 16:09 ET — never held overnight.
 
 ## Safety: paper mode is the default

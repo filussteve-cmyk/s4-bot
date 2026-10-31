@@ -4,8 +4,8 @@ Paper mode (default): connects, reads bars, detects setups and LOGS every
 signal. It NEVER calls any order-placement API in paper mode.
 
 Live mode: ONLY when config.yaml explicitly sets ``mode: live``. Then a
-second-touch signal places a limit order at exactly L with a native 4-point
-stop / 5-point target bracket via the TopstepX Gateway.
+second-touch signal places a limit order at exactly L with a native 2-point
+stop / 7-point target bracket via the TopstepX Gateway.
 
 Startup: existing positions and working orders are queried FIRST. If a
 position or working order already exists, the bot manages/monitors it and
@@ -355,7 +355,7 @@ async def main() -> None:
                         log.info("PAPER: signal logged, no order placed.")
                         continue
 
-                    # LIVE: native bracket — limit at L, 4-pt stop, 5-pt target.
+                    # LIVE: native bracket — limit at L, 2-pt stop, 7-pt target.
                     side = (OrderSide.SELL.value if sig.direction == "short"
                             else OrderSide.BUY.value)
                     try:

@@ -120,8 +120,8 @@ def test_double_top_full_lifecycle():
     assert sig.direction == "short"
     assert sig.L == 6015
     assert sig.entry == 6015
-    assert sig.stop == 6019      # 4-pt stop
-    assert sig.target == 6010    # 5-pt target
+    assert sig.stop == 6017      # 2-pt stop
+    assert sig.target == 6008    # 7-pt target
     assert sig.bar_idx == 11
     # level consumed: one attempt per level per day
     top = [lv for lv in levels if lv.direction == "top" and lv.L == 6015][0]
@@ -138,8 +138,8 @@ def test_double_bottom_mirror():
     assert sig.direction == "long"
     assert sig.L == 5985
     assert sig.entry == 5985
-    assert sig.stop == 5981
-    assert sig.target == 5990
+    assert sig.stop == 5983
+    assert sig.target == 5992
     assert sig.bar_idx == 11
 
 
