@@ -8,7 +8,8 @@ ProjectX Gateway API client).
 only (09:30–16:00 ET). A swing extreme (±5 bars) pulls back ≥10 points, then
 retests ≥30 minutes later with the touch bar's extreme inside [L−1.0, L+0.5]
 (tops) / [L−0.5, L+1.0] (bottoms). Entry is a limit at exactly L with a
-native 2-point stop / 7-point target bracket. One attempt per level per day,
+2-point stop / 7-point target bracket placed by the bot's own REST-polling
+bracket on the fill (see Notes). One attempt per level per day,
 max 1 position, everything flattened at 16:09 ET — never held overnight.
 
 ## Safety: paper mode is the default
@@ -83,9 +84,15 @@ python -m pytest test_strategy.py -v
 
 - Built against `project-x-py` v4.x (TopstepX-only). Auth is
   `TradingSuite.create(instrument="ES", username=..., api_key=...)` (async).
-- Entries use the SDK's **native Gateway bracket** in one call:
-  `suite.orders.place_bracket_order(contract_id, side, size, entry_price,
-  stop_loss_price, take_profit_price, entry_type="limit", account_id=...)`.
+- Entries use the bot's own **REST-polling bracket** (`place_bracket_rest`
+  in bot.py): limit at L, poll `get_order_by_id` every ~1.5s for the fill,
+  then place the stop and target re-based on the actual fill price. The
+  SDK's `place_bracket_order` is NOT used: it waits for a websocket fill
+  event before placing protectives, and this bot is REST-only — on
+  Nov 10, 2026 that left a filled trade unprotected for the full 60s
+  timeout, the late stop was rejected as already through the market, and
+  the SDK emergency-closed at market (-$166.28 vs the intended -$103.78
+  stop). If a protective is rejected now, the bot market-closes at once.
 - Bars come from `suite.client.get_bars(symbol="ES", interval=5, unit=2)`
   as a polars DataFrame (`timestamp`/`open`/`high`/`low`/`close`/`volume`,
   UTC); the bot converts to ET and filters RTH.

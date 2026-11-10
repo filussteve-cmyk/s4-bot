@@ -4,8 +4,11 @@ Paper mode (default): connects, reads bars, detects setups and LOGS every
 signal. It NEVER calls any order-placement API in paper mode.
 
 Live mode: ONLY when config.yaml explicitly sets ``mode: live``. Then a
-second-touch signal places a limit order at exactly L with a native 2-point
-stop / 7-point target bracket via the TopstepX Gateway.
+second-touch signal places a limit order at exactly L; the moment it fills,
+a 2-point stop / 7-point target bracket is placed around the actual fill
+price by our own REST-polling bracket (see place_bracket_rest — the SDK's
+place_bracket_order waits on a websocket fill event that never arrives in
+REST-only mode, leaving trades unprotected for its full 60s timeout).
 
 Startup: existing positions and working orders are queried FIRST. If a
 position or working order already exists, the bot manages/monitors it and
@@ -130,6 +133,174 @@ def bars_from_df(df, trade_date: str):
         bars.append((ts, Bar(idx=len(bars), open=row["open"], high=row["high"],
                              low=row["low"], close=row["close"])))
     return bars
+
+
+# ---------------------------------------------------------------------------
+# REST-polling bracket (live entries)
+# ---------------------------------------------------------------------------
+# Why not the SDK's place_bracket_order: it waits for a websocket fill event
+# before placing the protective stop/target. This bot is REST-only (the
+# realtime websockets cannot traverse the egress proxy), so that event never
+# arrives and EVERY filled trade sat unprotected for the SDK's full 60s
+# timeout. On Nov 10, 2026 price crossed the 2-pt stop inside that minute;
+# the late stop was rejected as already through the market and the SDK
+# emergency-closed at market (-$166.28 instead of the intended -$103.78).
+# The functions below poll order/position state over REST every ~1.5s, place
+# the protectives within seconds of the fill, re-base them on the ACTUAL
+# fill price, and market-close at once if a protective order is rejected.
+
+FILL_POLL_SECONDS = 1.5
+FILL_TIMEOUT_SECONDS = 60  # same entry-fill window the SDK used
+_ORDER_FILLED = 2
+_ORDER_TERMINAL_NO_FILL = {3, 4, 5}  # Cancelled, Expired, Rejected
+
+
+def bracket_prices(direction: str, fill_price: float,
+                   stop_points: float, target_points: float):
+    """(stop, target) for a filled entry, re-based on the fill price."""
+    if direction == "long":
+        return fill_price - stop_points, fill_price + target_points
+    return fill_price + stop_points, fill_price - target_points
+
+
+async def _poll_entry_fill(suite, account_id: int, contract_id: str,
+                           entry_order_id: int, timeout: float):
+    """Poll REST until the entry order fills or goes terminal.
+
+    Returns (fill_price, position) on fill, (None, None) otherwise (terminal
+    no-fill status, or timeout with the order still working — the caller
+    cancels and re-checks). Poll errors are transient; keep polling.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        try:
+            order = await suite.orders.get_order_by_id(entry_order_id)
+        except Exception as e:
+            log.debug("Fill poll: get_order_by_id failed: %s", e)
+            order = None
+        if order is not None:
+            if int(order.status) == _ORDER_FILLED:
+                pos = await risk.get_open_position(suite, account_id,
+                                                   contract_id)
+                fill = order.filledPrice
+                if fill is None and pos is not None:
+                    fill = pos.averagePrice
+                return fill, pos
+            if int(order.status) in _ORDER_TERMINAL_NO_FILL:
+                return None, None
+        if asyncio.get_running_loop().time() >= deadline:
+            return None, None
+        await asyncio.sleep(FILL_POLL_SECONDS)
+
+
+async def place_bracket_rest(suite, account_id: int, contract_id: str,
+                             sig, size: int, entry_side: int) -> dict:
+    """Place an S4 live entry + protectives using REST polling only.
+
+    Returns a dict with outcome one of:
+      "protected"        — filled; stop and target working at the broker.
+      "no_trade"         — entry never filled; cancelled; account flat.
+      "emergency_closed" — filled, but a protective was rejected (e.g.
+                           price already through the stop); closed at
+                           market immediately rather than sitting exposed.
+      "unprotected"      — filled, protective rejected AND the emergency
+                           close failed; needs manual attention NOW.
+    plus entry_order_id / stop_order_id / target_order_id / fill_price.
+    """
+    result = {"outcome": "no_trade", "entry_order_id": None,
+              "stop_order_id": None, "target_order_id": None,
+              "fill_price": None}
+    stop_points = abs(sig.entry - sig.stop)
+    target_points = abs(sig.target - sig.entry)
+    exit_side = 1 - entry_side
+
+    entry_resp = await suite.orders.place_limit_order(
+        contract_id=contract_id, side=entry_side, size=size,
+        limit_price=sig.entry, account_id=account_id)
+    if not entry_resp or not entry_resp.success:
+        raise RuntimeError("entry placement rejected: %s"
+                           % getattr(entry_resp, "errorMessage", entry_resp))
+    entry_id = entry_resp.orderId
+    result["entry_order_id"] = entry_id
+    log.info("Bracket entry order %s placed (limit %.2f). "
+             "Polling REST for fill...", entry_id, sig.entry)
+
+    fill, _pos = await _poll_entry_fill(suite, account_id, contract_id,
+                                        entry_id,
+                                        timeout=FILL_TIMEOUT_SECONDS)
+    if fill is None:
+        # No fill inside the window: cancel the working entry, then check
+        # once more — a fill can land between the last poll and the cancel.
+        try:
+            await suite.orders.cancel_order(order_id=entry_id,
+                                            account_id=account_id)
+        except Exception as e:
+            log.warning("Cancel of unfilled entry %s failed: %s", entry_id, e)
+        await asyncio.sleep(1.0)
+        pos = await risk.get_open_position(suite, account_id, contract_id)
+        if pos is None:
+            log.info("Entry %s did not fill within %ss; cancelled. "
+                     "No trade.", entry_id, FILL_TIMEOUT_SECONDS)
+            return result
+        fill = pos.averagePrice
+        log.warning("Entry %s filled just as it was being cancelled; "
+                    "proceeding to protect @ %.2f.", entry_id, fill)
+    result["fill_price"] = fill
+
+    stop_price, target_price = bracket_prices(sig.direction, fill,
+                                              stop_points, target_points)
+
+    async def _emergency_close(why: str) -> None:
+        log.error("Emergency close: %s", why)
+        try:
+            await suite.positions.close_position_by_contract(
+                contract_id=contract_id, account_id=account_id)
+            result["outcome"] = "emergency_closed"
+        except Exception as e:
+            log.critical("Emergency close FAILED: %s — position may be "
+                         "open and unprotected!", e)
+            result["outcome"] = "unprotected"
+
+    # Stop first — it is the risk limiter. If price is already through it,
+    # the gateway rejects it (Nov 10) and we close at market instead.
+    try:
+        stop_resp = await suite.orders.place_stop_order(
+            contract_id=contract_id, side=exit_side, size=size,
+            stop_price=stop_price, account_id=account_id)
+        if not stop_resp or not stop_resp.success:
+            raise RuntimeError(getattr(stop_resp, "errorMessage",
+                                       "stop rejected"))
+        result["stop_order_id"] = stop_resp.orderId
+    except Exception as e:
+        await _emergency_close(
+            f"protective stop @ {stop_price:.2f} rejected ({e})")
+        return result
+
+    try:
+        tgt_resp = await suite.orders.place_limit_order(
+            contract_id=contract_id, side=exit_side, size=size,
+            limit_price=target_price, account_id=account_id)
+        if not tgt_resp or not tgt_resp.success:
+            raise RuntimeError(getattr(tgt_resp, "errorMessage",
+                                       "target rejected"))
+        result["target_order_id"] = tgt_resp.orderId
+    except Exception as e:
+        # Never sit on a half-bracket: pull the stop, then close.
+        try:
+            await suite.orders.cancel_order(
+                order_id=result["stop_order_id"], account_id=account_id)
+        except Exception:
+            pass
+        await _emergency_close(
+            f"protective target @ {target_price:.2f} rejected ({e})")
+        return result
+
+    result["outcome"] = "protected"
+    log.warning("LIVE bracket protected: entry %s filled @ %.2f; "
+                "stop %s @ %.2f; target %s @ %.2f.",
+                entry_id, fill, result["stop_order_id"], stop_price,
+                result["target_order_id"], target_price)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -355,39 +526,43 @@ async def main() -> None:
                         log.info("PAPER: signal logged, no order placed.")
                         continue
 
-                    # LIVE: native bracket — limit at L, 2-pt stop, 7-pt target.
+                    # LIVE: REST-polling bracket — limit at L; on fill the
+                    # 2-pt stop / 7-pt target go in within seconds, re-based
+                    # on the actual fill price (see place_bracket_rest).
                     side = (OrderSide.SELL.value if sig.direction == "short"
                             else OrderSide.BUY.value)
                     try:
-                        resp = await suite.orders.place_bracket_order(
-                            contract_id=contract_id,
-                            side=side,
-                            size=size,
-                            entry_price=sig.entry,
-                            stop_loss_price=sig.stop,
-                            take_profit_price=sig.target,
-                            entry_type="limit",
-                            account_id=account_id,
-                        )
+                        res = await place_bracket_rest(
+                            suite, account_id, contract_id, sig, size, side)
                     except Exception as e:
-                        # The SDK raises when the entry limit doesn't fill
-                        # within its 60s wait — it cancels the unfilled entry
-                        # order itself before raising. That's a no-trade
-                        # outcome, not a crash: no position and no working
-                        # order remain at the broker. Size is 1 contract, so
-                        # a partial fill can't leave us exposed. Log it and
-                        # keep the loop alive so the next signal can fire.
-                        log.warning("LIVE bracket failed (entry unfilled): %s. "
-                                    "No position taken — continuing.", e)
+                        # Placement errored outside the handled paths. Do
+                        # NOT claim "entry unfilled" (the Nov 10 log did,
+                        # wrongly, after a filled emergency close) — the
+                        # truth is whatever the broker shows; the pre-order
+                        # risk check and the reconcile loop read the broker
+                        # directly, so state stays consistent. Keep the
+                        # loop alive so the next signal can fire.
+                        log.error("LIVE bracket placement error: %s. "
+                                  "Continuing; broker state governs.", e)
                         continue
-                    log.warning("LIVE order placed: %s", resp)
-                    state["has_position"] = True
-                    state["entry_order_id"] = getattr(resp, "entry_order_id", None)
-                    state["protective_order_ids"] = [
-                        oid for oid in (getattr(resp, "stop_order_id", None),
-                                        getattr(resp, "target_order_id", None))
-                        if oid]
-                    save_state(state)
+                    if res["outcome"] == "protected":
+                        state["has_position"] = True
+                        state["entry_order_id"] = res["entry_order_id"]
+                        state["protective_order_ids"] = [
+                            oid for oid in (res["stop_order_id"],
+                                            res["target_order_id"]) if oid]
+                        save_state(state)
+                    elif res["outcome"] == "unprotected":
+                        # Position may be open with NO protectives. Flag it
+                        # as ours so reconcile/startup treat it correctly;
+                        # the daily-loss halt and 16:09 flatten still apply.
+                        state["has_position"] = True
+                        state["entry_order_id"] = res["entry_order_id"]
+                        state["protective_order_ids"] = []
+                        save_state(state)
+                        log.critical("Position UNPROTECTED after bracket "
+                                     "failure — manual attention needed.")
+                    # "no_trade" / "emergency_closed": flat; nothing to record.
 
             state["levels"] = [serialize_level(lv) for lv in levels]
             save_state(state)
